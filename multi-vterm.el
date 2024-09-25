@@ -33,6 +33,8 @@
 (require 'cl-lib)
 (require 'vterm)
 (require 'project)
+(require 'svg-tag-mode)
+(require 'tab-line)
 
 (defgroup multi-vterm nil
   "Multi term manager"
@@ -44,7 +46,7 @@ If nil, this defaults to the SHELL environment variable."
   :type 'string
   :group 'multi-vterm)
 
-(defcustom multi-vterm-buffer-name "vterminal"
+(defcustom multi-vterm-buffer-name "shell"
   "The vterm buffer name."
   :type 'string
   :group 'multi-vterm)
@@ -59,8 +61,7 @@ If nil, this defaults to the SHELL environment variable."
   :type 'integer
   :group 'multi-vterm)
 
-;; Contants
-(defconst multi-vterm-dedicated-buffer-name "dedicated"
+(defvar multi-vterm-dedicated-buffer-name multi-vterm-buffer-name
   "The dedicated vterm buffer name.")
 
 (defconst multi-vterm-dedicated-window-height-percent-limits '(10 90)
@@ -81,11 +82,19 @@ If nil, this defaults to the SHELL environment variable."
 (defun multi-vterm ()
   "Create new vterm buffer."
   (interactive)
-  (let* ((vterm-buffer (multi-vterm-get-buffer)))
+  
+  (progn
+	(set-window-dedicated-p multi-vterm-dedicated-window nil)
+	(let* ((default-directory "~/")
+		 (vterm-buffer (multi-vterm-get-buffer)))
     (setq multi-vterm-buffer-list (nconc multi-vterm-buffer-list (list vterm-buffer)))
     (set-buffer vterm-buffer)
     (multi-vterm-internal)
-    (switch-to-buffer vterm-buffer)))
+    (switch-to-buffer vterm-buffer))
+	(setq multi-vterm-dedicated-window (selected-window))
+	(setq multi-vterm-dedicated-buffer (current-buffer))
+	(setq multi-vterm-dedicated-buffer-name (buffer-name))
+	(set-window-dedicated-p multi-vterm-dedicated-window t)))
 
 ;;;###autoload
 (defun multi-vterm-project ()
@@ -112,13 +121,12 @@ If nil, this defaults to the SHELL environment variable."
           (unless (multi-vterm-window-exist-p multi-vterm-dedicated-window)
             (multi-vterm-dedicated-get-window))
         (setq multi-vterm-dedicated-buffer (multi-vterm-get-buffer 'dedicated))
-        (set-buffer (multi-vterm-dedicated-get-buffer-name))
+        (set-buffer multi-vterm-dedicated-buffer-name)
         (multi-vterm-dedicated-get-window)
         (multi-vterm-internal)))
-  (set-window-buffer multi-vterm-dedicated-window (get-buffer (multi-vterm-dedicated-get-buffer-name)))
+    (set-window-buffer multi-vterm-dedicated-window (get-buffer multi-vterm-dedicated-buffer-name))
   (set-window-dedicated-p multi-vterm-dedicated-window t)
-  (select-window multi-vterm-dedicated-window)
-  (message "`multi-vterm' dedicated window has exist."))
+  (select-window multi-vterm-dedicated-window))
 
 ;;;###autoload
 (defun multi-vterm-dedicated-close ()
@@ -137,7 +145,9 @@ If nil, this defaults to the SHELL environment variable."
   "Toggle dedicated `multi-vterm' window."
   (interactive)
   (if (multi-vterm-dedicated-exist-p)
-      (multi-vterm-dedicated-close)
+      (if  (eq (current-buffer) multi-vterm-dedicated-buffer)
+		  (multi-vterm-dedicated-close)
+		(select-window multi-vterm-dedicated-window))
     (multi-vterm-dedicated-open)))
 
 ;;;###autoload
@@ -154,7 +164,7 @@ Optional argument DEDICATED-WINDOW: There are three types of DEDICATED-WINDOW: d
   (with-temp-buffer
     (let ((index 1)
           vterm-name)
-      (cond ((eq dedicated-window 'dedicated) (setq vterm-name (multi-vterm-dedicated-get-buffer-name)))
+      (cond ((eq dedicated-window 'dedicated) (setq vterm-name multi-vterm-dedicated-buffer-name))
             ((eq dedicated-window 'project) (progn
                                               (setq vterm-name (multi-vterm-project-get-buffer-name))
                                               (setq default-directory (multi-vterm-project-root))))
@@ -190,11 +200,11 @@ Optional argument DEDICATED-WINDOW: There are three types of DEDICATED-WINDOW: d
 
 (defun multi-vterm-format-buffer-name (name)
   "Format vterm buffer NAME."
-  (format "*%s - %s*" multi-vterm-buffer-name name))
+  (format "%s - %s" multi-vterm-buffer-name name))
 
 (defun multi-vterm-format-buffer-index (index)
   "Format vterm buffer name with INDEX."
-  (format "*%s<%s>*" multi-vterm-buffer-name index))
+  (format "%s: %s" multi-vterm-buffer-name index))
 
 (defun multi-vterm-handle-close ()
   "Close current vterm buffer when `exit' from vterm buffer."
@@ -269,9 +279,6 @@ If `window' is nil, get current window."
 		       100))))
 	multi-vterm-dedicated-window-height))
 
-(defun multi-vterm-dedicated-get-buffer-name ()
-  "Get the buffer name of `multi-vterm' dedicated window."
-  (multi-vterm-format-buffer-name multi-vterm-dedicated-buffer-name))
 
 (defun multi-vterm-dedicated-exist-p ()
   "Return non-nil if `multi-vterm' dedicated window exists."
@@ -301,6 +308,194 @@ Option OFFSET for skip OFFSET number term buffer."
                                 (mod (- my-index offset) buffer-list-len))))
             (switch-to-buffer (nth target-index multi-vterm-buffer-list)))
         (switch-to-buffer (car multi-vterm-buffer-list))))))
+
+
+
+
+  (defface tab-bar-svg-active
+  '((t (:foreground "#a1aeb5")))
+  "Tab bar face for selected tab.")
+
+(defface tab-bar-svg-inactive
+  '((t (:foreground "#a1aeb5")))
+  "Tab bar face for inactive tabs.")
+
+(defun eli/tab-bar-svg-padding (width string)
+  (let* ((style svg-lib-style-default)
+         (margin      (plist-get style :margin))
+         (txt-char-width  (window-font-width nil 'fixed-pitch))
+         (tag-width (- width (* margin txt-char-width)))
+         (padding (- (/ tag-width txt-char-width) (length string))))
+    padding))
+
+(defun eli/tab-bar-tab-name-with-svg (tab i)
+  (let* ((current-p (eq (car tab) 'current-tab))
+         (name (concat (if tab-bar-tab-hints (format "%d " i) "")
+                       (alist-get 'name tab)
+                       (or (and tab-bar-close-button-show
+                                (not (eq tab-bar-close-button-show
+                                         (if current-p 'non-selected 'selected)))
+                                tab-bar-close-button)
+                           "")))
+         (padding (plist-get svg-lib-style-default :padding))
+         (width)
+         (image-scaling-factor 1.0))
+    (when tab-bar-auto-width
+      (setq width (/ (frame-inner-width)
+                     (length (funcall tab-bar-tabs-function))))
+      (when tab-bar-auto-width-min
+        (setq width (max width (if (window-system)
+                                   (nth 0 tab-bar-auto-width-min)
+                                 (nth 1 tab-bar-auto-width-min)))))
+      (when tab-bar-auto-width-max
+        (setq width (min width (if (window-system)
+                                   (nth 0 tab-bar-auto-width-max)
+                                 (nth 1 tab-bar-auto-width-max)))))
+      (setq padding (eli/tab-bar-svg-padding width name)))
+    (propertize
+     name
+     'display
+     (svg-tag-make
+      name
+      :face (if (eq (car tab) 'current-tab) 'tab-bar-svg-active 'tab-bar-svg-inactive)
+      :inverse (eq (car tab) 'current-tab) :margin 0 :radius 6 :padding padding
+      :height 1.1))))
+(setq tab-bar-tab-name-format-function #'eli/tab-bar-tab-name-with-svg)
+(defun sn/tab-line-tab-name-buffer (buffer &optional _buffers)
+  "how tabs should look"
+  (let* ((name (buffer-name buffer))
+         (padding (plist-get svg-lib-style-default :padding))
+         (width 200)
+         (image-scaling-factor 1.5))
+    (propertize
+     name
+     'display
+     (svg-tag-make
+      name
+      :face (if (eq (buffer-name) buffer) 'tab-bar-svg-active 'tab-bar-svg-inactive)
+      :inverse (eq (buffer-name) buffer) :margin 0 :radius 6 :padding padding
+      :height 1.1))))
+(setq tab-line-tab-name-function #'sn/tab-line-tab-name-buffer)
+
+(defun sn/tab-group (buffer)
+  "Group buffers by major mode.
+  Returns a single group name as a string for buffers with major modes
+  flymake-project-diagnostics-mode, compilation-mode, and vterm-mode."
+  (with-current-buffer buffer
+    (when (or (derived-mode-p 'flymake-project-diagnostics-mode)
+			  (derived-mode-p 'compilation-mode)
+			  (derived-mode-p 'vterm-mode))
+	  "🦥")))
+(advice-add 'tab-line-select-tab-buffer :around
+            (lambda (orig-fun &rest args)
+              (let ((window (selected-window)))
+                (progn
+				  (set-window-dedicated-p window nil)
+                  (apply orig-fun args)
+				  (setq multi-vterm-dedicated-window (selected-window))
+				  (setq multi-vterm-dedicated-buffer (current-buffer))
+				  (setq multi-vterm-dedicated-buffer-name (buffer-name))
+                  (set-window-dedicated-p (window) t)
+				  ))))
+
+  ;;(setq tab-line-tabs-buffer-group-function #'my-tab-line-buffer-group-by-major-mode)
+  ;; (setq tab-line-tab-face-functions 'sn/line-tab-face-env)
+  (setq tab-line-tabs-function 'tab-line-tabs-buffer-groups)
+  (setq tab-line-tabs-buffer-group-function 'sn/tab-group)  (defface tab-bar-svg-active
+  '((t (:foreground "#a1aeb5")))
+  "Tab bar face for selected tab.")
+
+(defface tab-bar-svg-inactive
+  '((t (:foreground "#a1aeb5")))
+  "Tab bar face for inactive tabs.")
+
+(defun eli/tab-bar-svg-padding (width string)
+  (let* ((style svg-lib-style-default)
+         (margin      (plist-get style :margin))
+         (txt-char-width  (window-font-width nil 'fixed-pitch))
+         (tag-width (- width (* margin txt-char-width)))
+         (padding (- (/ tag-width txt-char-width) (length string))))
+    padding))
+
+(defun eli/tab-bar-tab-name-with-svg (tab i)
+  (let* ((current-p (eq (car tab) 'current-tab))
+         (name (concat (if tab-bar-tab-hints (format "%d " i) "")
+                       (alist-get 'name tab)
+                       (or (and tab-bar-close-button-show
+                                (not (eq tab-bar-close-button-show
+                                         (if current-p 'non-selected 'selected)))
+                                tab-bar-close-button)
+                           "")))
+         (padding (plist-get svg-lib-style-default :padding))
+         (width)
+         (image-scaling-factor 1.0))
+    (when tab-bar-auto-width
+      (setq width (/ (frame-inner-width)
+                     (length (funcall tab-bar-tabs-function))))
+      (when tab-bar-auto-width-min
+        (setq width (max width (if (window-system)
+                                   (nth 0 tab-bar-auto-width-min)
+                                 (nth 1 tab-bar-auto-width-min)))))
+      (when tab-bar-auto-width-max
+        (setq width (min width (if (window-system)
+                                   (nth 0 tab-bar-auto-width-max)
+                                 (nth 1 tab-bar-auto-width-max)))))
+      (setq padding (eli/tab-bar-svg-padding width name)))
+    (propertize
+     name
+     'display
+     (svg-tag-make
+      name
+      :face (if (eq (car tab) 'current-tab) 'tab-bar-svg-active 'tab-bar-svg-inactive)
+      :inverse (eq (car tab) 'current-tab) :margin 0 :radius 6 :padding padding
+      :height 1.1))))
+(setq tab-bar-tab-name-format-function #'eli/tab-bar-tab-name-with-svg)
+(defun sn/tab-line-tab-name-buffer (buffer &optional _buffers)
+  "how tabs should look"
+  (let* ((name (buffer-name buffer))
+         (padding (plist-get svg-lib-style-default :padding))
+         (width 200)
+         (image-scaling-factor 1.5))
+    (propertize
+     name
+     'display
+     (svg-tag-make
+      name
+      :face (if (eq (buffer-name) buffer) 'tab-bar-svg-active 'tab-bar-svg-inactive)
+      :inverse (eq (buffer-name) buffer) :margin 0 :radius 6 :padding padding
+      :height 1.1))))
+(setq tab-line-tab-name-function #'sn/tab-line-tab-name-buffer)
+
+(defun sn/tab-group (buffer)
+  "Group buffers by major mode.
+  Returns a single group name as a string for buffers with major modes
+  flymake-project-diagnostics-mode, compilation-mode, and vterm-mode."
+  (with-current-buffer buffer
+    (when (or (derived-mode-p 'flymake-project-diagnostics-mode)
+			  (derived-mode-p 'compilation-mode)
+			  (derived-mode-p 'vterm-mode))
+	  "🦥")))
+(advice-add 'tab-line-select-tab-buffer :around
+            (lambda (orig-fun &rest args)
+              (let ((window (selected-window)))
+                (progn
+				  (set-window-dedicated-p window nil)
+                  (apply orig-fun args)
+				  (setq multi-vterm-dedicated-window (selected-window))
+				  (setq multi-vterm-dedicated-buffer (current-buffer))
+				  (setq multi-vterm-dedicated-buffer-name (buffer-name))
+                  (set-window-dedicated-p (window) t)
+				  ))))
+
+  ;;(setq tab-line-tabs-buffer-group-function #'my-tab-line-buffer-group-by-major-mode)
+  ;; (setq tab-line-tab-face-functions 'sn/line-tab-face-env)
+  (setq tab-line-tabs-function 'tab-line-tabs-buffer-groups)
+  (setq tab-line-tabs-buffer-group-function 'sn/tab-group)
+
+
+
+(setq tab-line-new-button-show nil)
+(setq tab-line-close-button-show 'selected)
 
 (provide 'multi-vterm)
 ;;; multi-vterm.el ends here
