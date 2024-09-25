@@ -29,6 +29,8 @@
 ;;
 ;;  `vterm'
 ;;  `project'
+;;  `tab-line'
+;;  `svg-tag-mode'
 ;;; Code:
 (require 'cl-lib)
 (require 'vterm)
