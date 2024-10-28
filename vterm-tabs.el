@@ -388,6 +388,17 @@ Option OFFSET for skip OFFSET number term buffer."
 	  :padding padding
       :height 1.1))))
 
+(defun vterm-tabs--tab-group (buffer)
+  "Group buffers by major mode.
+  Returns a single group name as a string for buffers with major modes
+  flymake-project-diagnostics-mode, compilation-mode, and vterm-mode."
+  (with-current-buffer buffer
+    (when (or (derived-mode-p 'flymake-project-diagnostics-mode)
+			  (derived-mode-p 'compilation-mode)
+			  (derived-mode-p 'vterm-mode))
+	  "🦥")))
+
+
 ;; TODO(SN): remove when this is fixed.
 ;;;###autoload
 (defun old-version-of-vterm--get-color (index &rest args)
@@ -431,7 +442,7 @@ Re-introducing the old version fixes auto-dim-other-buffers for vterm buffers."
     (setq-local
      tab-line-tabs-function 'tab-line-tabs-buffer-groups
      tab-line-tab-name-function #'vterm-tabs--line-tab-name-buffer
-     tab-line-tabs-buffer-group-function nil
+     tab-line-tabs-buffer-group-function 'vterm-tabs--tab-group
      tab-line-new-button-show nil
      tab-line-close-button-show nil
      tab-bar-tab-name-format-function #'vterm-tabs--tab-name-with-svg)
