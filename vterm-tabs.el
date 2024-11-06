@@ -64,14 +64,24 @@
 	(setq vterm-tabs--last-compilation-buffer next-error-last-buffer))
 
 (defun vterm-tabs--find-prev-compilation (orig &optional edit-command)
-	"Find the previous compilation buffer, if present, and recompile there."
-	(if (and (null edit-command)
-		  (not (derived-mode-p 'compilation-mode))
-		  vterm-tabs--last-compilation-buffer
-		  (buffer-live-p (get-buffer sanityinc/last-compilation-buffer)))
-	  (with-current-buffer vterm-tabs--last-compilation-buffer
-		(funcall orig edit-command))
-	  (funcall orig edit-command)))
+  "Find the previous compilation buffer, if present, and recompile there.
+If EDIT-COMMAND is nil and we are not in a compilation mode,
+it attempts to use `vterm-tabs--last-compilation-buffer`."
+  (if (and (null edit-command)
+           (not (derived-mode-p 'compilation-mode))
+           vterm-tabs--last-compilation-buffer
+           (buffer-live-p (get-buffer vterm-tabs--last-compilation-buffer)))
+      (let ((compilation-buffer vterm-tabs--last-compilation-buffer))
+        (if (window-live-p vterm-tabs-window)
+            (progn
+              (set-window-buffer vterm-tabs-window compilation-buffer)
+              (select-window vterm-tabs-window)
+              (with-current-buffer compilation-buffer
+                (funcall orig edit-command)))
+          (with-current-buffer compilation-buffer
+            (funcall orig edit-command))))
+    ;; Fallback to the original behavior if no previous compilation buffer
+    (funcall orig edit-command)))
 
 (defun vterm-tabs--colourise-compilation-buffer ()
 	(when (eq major-mode 'compilation-mode)
@@ -220,15 +230,52 @@ Re-introducing the old version fixes auto-dim-other-buffers for vterm buffers."
 	  (setq vterm-tabs-dedicated-buffer-name (buffer-name))
 	  (set-window-dedicated-p vterm-tabs-dedicated-window t)))
 
+
+(defun vterm-tabs--all-buffers ()
+  "Return a list of buffers to display during vterm-tabs-mode.
+Include the last accessed vterm buffer, any active vterm buffers,
+the last compilation buffer, and possibly a magit status buffer."
+
+  (let ((buffers
+         (append
+          ;; Include vterm buffers
+          vterm-tabs-buffer-list
+          
+          ;; Include last accessed vterm buffer if it's live and not already in the list
+          (when (and vterm-tabs-last-buffer
+                     (buffer-live-p vterm-tabs-last-buffer)
+                     (not (memq vterm-tabs-last-buffer vterm-tabs-buffer-list)))
+            (list vterm-tabs-last-buffer))
+          
+          ;; Include the last compilation buffer if it's live
+          (when (and vterm-tabs--last-compilation-buffer
+                     (buffer-live-p vterm-tabs--last-compilation-buffer))
+            (list vterm-tabs--last-compilation-buffer))
+          
+          ;; Fallback: create and set the compilation buffer if it's nil
+          (unless (and vterm-tabs--last-compilation-buffer
+                       (buffer-live-p vterm-tabs--last-compilation-buffer))
+            ;; Create buffer and set it to vterm-tabs--last-compilation-buffer
+            (let ((compilation-buffer (get-buffer-create "*compilation*")))
+              (setq vterm-tabs--last-compilation-buffer compilation-buffer)
+              (list compilation-buffer)))
+          
+          ;; Optionally include the magit status buffer for the current project
+          (let ((magit-buffer (and (fboundp 'magit-status-buffer)
+                                   (magit-status-buffer))))
+            (when (and magit-buffer (buffer-live-p magit-buffer))
+              (list magit-buffer))))))
+    ;; Return the list of buffers
+    buffers))
+
 ;;;###autoload
 (define-minor-mode vterm-tabs-mode
   "Minor mode to handle tabs in vterm."
   :lighter nil
   (when vterm-tabs-mode
     (setq-local
-     tab-line-tabs-function 'tab-line-tabs-buffer-groups
-	 tab-line-tab-name-function #'svg-tabs--svg-line-tab-name-buffer
-     tab-line-tabs-buffer-group-function 'vterm-tabs--tab-group)
+     tab-line-tabs-function 'vterm-tabs--all-buffers
+	 tab-line-tab-name-function #'svg-tabs--svg-line-tab-name-buffer)
     (tab-line-mode 1)))
 
 
