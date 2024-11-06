@@ -35,8 +35,8 @@
 (require 'vterm)
 (require 'project)
 (require 'tab-line)
-
 (require 'svg-tabs)
+(require 'compile)
 
 (defgroup vterm-tabs nil
   "Multi term manager"
@@ -47,106 +47,77 @@
   :type 'string
   :group 'vterm-tabs)
 
-(defcustom vterm-tabs-dedicated-window-height 30
-  "The height of the `vterm-tabs' dedicated window in rows."
-  :type 'integer
-  :group 'vterm-tabs)
+(defvar vterm-tabs-window nil
+  "Window displaying the vterm sidebar.")
 
-(defcustom vterm-tabs-dedicated-window-height-percent nil
-  "The height of the `vterm-tabs' dedicated window in percent of rows."
-  :type 'integer
-  :group 'vterm-tabs)
-
-(defconst vterm-tabs-dedicated-window-height-percent-limits '(10 90)
-  "The dedicated vterm buffer height boundaries in percent")
-
-;; Variables
-(defvar vterm-tabs-dedicated-window nil
-  "The dedicated `vterm-tabs' window.")
-
-(defvar vterm-tabs-dedicated-buffer nil
-  "The dedicated `vterm-tabs' buffer.")
-
-(defvar vterm-tabs-frame nil
-  "The dedicated `vterm-tabs' frame.")
-
-
-(defvar vterm-tabs-dedicated-buffer-name vterm-tabs-buffer-name
-  "The dedicated vterm buffer name.")
 
 (defvar vterm-tabs-buffer-list nil
   "The list of non-dedicated terminal buffers managed by `vterm-tabs'.")
 
-;; Interactive Functions
+;; compile buffer from sanityinc
+(defvar vterm-tabs--last-compilation-buffer nil
+	"The last buffer in which compilation took place.")
+
+(defun vterm-tabs--save-compilation-buffer (&rest _)
+	"Save the compilation buffer to find it later."
+	(setq vterm-tabs--last-compilation-buffer next-error-last-buffer))
+
+(defun vterm-tabs--find-prev-compilation (orig &optional edit-command)
+	"Find the previous compilation buffer, if present, and recompile there."
+	(if (and (null edit-command)
+		  (not (derived-mode-p 'compilation-mode))
+		  vterm-tabs--last-compilation-buffer
+		  (buffer-live-p (get-buffer sanityinc/last-compilation-buffer)))
+	  (with-current-buffer vterm-tabs--last-compilation-buffer
+		(funcall orig edit-command))
+	  (funcall orig edit-command)))
+
+(defun vterm-tabs--colourise-compilation-buffer ()
+	(when (eq major-mode 'compilation-mode)
+	  (ansi-color-apply-on-region compilation-filter-start (point-max))))
+
+
+(defun vterm-tabs-create-or-switch ()
+  "Create or switch to the vterm tabs buffer."
+  (let ((buffer (get-buffer-create vterm-tabs-buffer-name)))
+    (with-current-buffer buffer
+      (unless (derived-mode-p 'vterm-mode)
+        (vterm-mode)))
+    buffer))
+
+
 ;;;###autoload
-(defun vterm-tabs ()
-  "Create new vterm buffer."
+(defun vterm-tabs-toggle ()
+  "Toggle visibility of the vterm sidebar."
   (interactive)
-  (progn
-	(set-window-dedicated-p vterm-tabs-dedicated-window nil)
-	(let* ((default-directory "~/")
-		 (vterm-buffer (vterm-tabs-get-buffer)))
-    (setq vterm-tabs-buffer-list (nconc vterm-tabs-buffer-list (list vterm-buffer)))
-    (set-buffer vterm-buffer)
-    (vterm-tabs-internal)
-    (switch-to-buffer vterm-buffer))
-	(setq vterm-tabs-dedicated-window (selected-window))
-	(setq vterm-tabs-dedicated-buffer (current-buffer))
-	(setq vterm-tabs-dedicated-buffer-name (buffer-name))
-	(set-window-dedicated-p vterm-tabs-dedicated-window t)))
-
-;;;###autoload
-(defun vterm-tabs-project ()
-  "Create new vterm buffer."
-  (interactive)
-  (let* (
-		  (project-root (or (project-current) `(transient . ,default-directory)))
-		  )
-	)
-  (if (vterm-tabs-project-root)
-      (if (buffer-live-p (get-buffer ))
-          (if (string-equal (buffer-name (current-buffer)) (vterm-tabs-project-get-buffer-name))
-              (delete-window (selected-window))
-            (switch-to-buffer-other-window (vterm-tabs-project-get-buffer-name)))
-        (let* ((vterm-buffer (vterm-tabs-get-buffer 'project))
-               (vterm-tabs-buffer-list (nconc vterm-tabs-buffer-list (list vterm-buffer))))
-          (set-buffer vterm-buffer)
-          (vterm-tabs-internal)
-          (switch-to-buffer-other-window vterm-buffer)))
-    (message "This file is not in a project")))
+  (if (and vterm-tabs-window (window-live-p vterm-tabs-window))
+      (progn
+        (delete-window vterm-tabs-window)
+        (setq vterm-tabs-window nil))
+    (let ((buffer (vterm-tabs-create-or-switch)))
+      (setq vterm-tabs-window (display-buffer-in-side-window buffer '((side . bottom))))
+      (set-window-dedicated-p vterm-tabs-window t)
+      (set-window-parameter vterm-tabs-window 'no-other-window t)
+	  (select-window vterm-tabs-window))))
 
 
 
-
-(defun vterm-tabs-get-buffer (&optional dedicated-window)
-  "Get vterm buffer name based on DEDICATED-WINDOW.
-Optional argument DEDICATED-WINDOW: There are three types of DEDICATED-WINDOW: dedicated, project, default."
-  (with-temp-buffer
-    (let ((index 1)
-          vterm-name)
-      (cond ((eq dedicated-window 'dedicated) (setq vterm-name vterm-tabs-dedicated-buffer-name))
-            ((eq dedicated-window 'project) (progn
-                                              (setq vterm-name (vterm-tabs-project-get-buffer-name))
-                                              (setq default-directory (vterm-tabs-project-root))))
-            (t (progn
-                 (while (buffer-live-p (get-buffer (vterm-tabs-format-buffer-index index)))
-                   (setq index (1+ index)))
-                 (setq vterm-name (vterm-tabs-format-buffer-index index)))))
-      (let ((buffer (get-buffer vterm-name)))
-        (if buffer
-            buffer
-          (let ((buffer (generate-new-buffer vterm-name)))
-            (set-buffer buffer)
-            (vterm-mode)
-            buffer))))))
-
-(defun vterm-tabs-project-root ()
-  "Get `default-directory' for project using projectile or project.el."
-  (unless (boundp 'vterm-tabs-projectile-installed-p)
-    (setq vterm-tabs-projectile-installed-p (require 'projectile nil t)))
-  (if vterm-tabs-projectile-installed-p
-      (projectile-project-root)
-    ))
+;; ###autoload
+;; (defun vterm-tabs-project ()
+;;   "Create new vterm buffer."
+;;   (interactive)
+;;   (let* ((project-root (or (project-current) `(transient . ,default-directory)))))
+;;   (if (vterm-tabs-project-root)
+;;       (if (buffer-live-p (get-buffer ))
+;;           (if (string-equal (buffer-name (current-buffer)) (vterm-tabs-project-get-buffer-name))
+;;               (delete-window (selected-window))
+;;             (switch-to-buffer-other-window (vterm-tabs-project-get-buffer-name)))
+;;         (let* ((vterm-buffer (vterm-tabs-get-buffer 'project))
+;;                (vterm-tabs-buffer-list (nconc vterm-tabs-buffer-list (list vterm-buffer))))
+;;           (set-buffer vterm-buffer)
+;;           (vterm-tabs-internal)
+;;           (switch-to-buffer-other-window vterm-buffer)))
+;;     (message "This file is not in a project")))
 
 
 (defun vterm-tabs-rename-buffer (name)
@@ -157,10 +128,6 @@ Optional argument DEDICATED-WINDOW: There are three types of DEDICATED-WINDOW: d
 (defun vterm-tabs-format-buffer-name (name)
   "Format vterm buffer NAME."
   (format "%s - %s" vterm-tabs-buffer-name name))
-
-(defun vterm-tabs-format-buffer-index (index)
-  "Format vterm buffer name with INDEX."
-  (format "%s: %s" vterm-tabs-buffer-name index))
 
 (defun vterm-tabs-handle-close ()
   "Close current vterm buffer when `exit' from vterm buffer."
@@ -302,9 +269,18 @@ Re-introducing the old version fixes auto-dim-other-buffers for vterm buffers."
 (define-globalized-minor-mode global-vterm-tabs-mode
   vterm-tabs-mode vterm-tabs-mode--on
   :group 'vterm-tabs
-  (when global-vterm-tabs-mode
-    (advice-add 'vterm--get-color :override #'old-version-of-vterm--get-color)
-	(advice-add 'tab-line-select-tab-buffer :around #'vterm-tabs--select-buffer)))
+  (if global-vterm-tabs-mode
+	(progn
+      (advice-add 'vterm--get-color :override #'old-version-of-vterm--get-color)
+	  (advice-add 'tab-line-select-tab-buffer :around #'vterm-tabs--select-buffer)
+	  (advice-add 'compilation-start :after 'vterm-tabs--save-compilation-buffer)
+	  (advice-add 'recompile :around 'vterm-tabs--find-prev-compilation)
+	  (add-hook 'compilation-filter-hook 'vterm-tabs--colourise-compilation-buffer))
+	(progn
+	  (advice-remove 'vterm--get-color  #'old-version-of-vterm--get-color)
+	  (advice-remove 'tab-line-select-tab-buffer  #'vterm-tabs--select-buffer)
+	  (advice-remove 'compilation-start  'vterm-tabs--save-compilation-buffer)
+	  (remove-hook 'compilation-filter-hook 'vterm-tabs--colourise-compilation-buffer))))
 
 (defun vterm-tabs--select-buffer (orig-fun &rest args)
     (let ((window (selected-window)))
