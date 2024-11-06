@@ -23,13 +23,12 @@
 
 ;;; Commentary:
 ;; Managing multiple vterm buffers in Emacs
-;; This started as a fork of multi-term.el but.
+;; This started as a fork of multi-term.el but It doesn't really resemble the
+;; original anymore.
 ;;
-;; Features that might be required by this library:
-;;
+;; packages not built-in
 ;;  `vterm'
-;;  `project'
-;;  `tab-line'
+;;  `svg-tabs'
 ;;; Code:
 (require 'cl-lib)
 (require 'vterm)
@@ -50,9 +49,11 @@
 (defvar vterm-tabs-window nil
   "Window displaying the vterm sidebar.")
 
-
 (defvar vterm-tabs-buffer-list nil
   "The list of non-dedicated terminal buffers managed by `vterm-tabs'.")
+
+(defvar vterm-tabs-last-buffer nil
+  "The last accessed vterm buffer.")
 
 ;; compile buffer from sanityinc
 (defvar vterm-tabs--last-compilation-buffer nil
@@ -76,130 +77,104 @@
 	(when (eq major-mode 'compilation-mode)
 	  (ansi-color-apply-on-region compilation-filter-start (point-max))))
 
-
 (defun vterm-tabs-create-or-switch ()
-  "Create or switch to the vterm tabs buffer."
-  (let ((buffer (get-buffer-create vterm-tabs-buffer-name)))
+  "Create a new vterm buffer or switch to an existing one, reusing the window."
+  (interactive)
+  (let ((buffer (generate-new-buffer (generate-new-buffer-name vterm-tabs-buffer-name))))
     (with-current-buffer buffer
-      (unless (derived-mode-p 'vterm-mode)
-        (vterm-mode)))
-    buffer))
+      (vterm-mode)
+      (add-hook 'kill-buffer-hook #'vterm-tabs-remove-buffer nil t)
+      (push buffer vterm-tabs-buffer-list))
+    (vterm-tabs-switch buffer)))
 
+(defun vterm-tabs-remove-buffer ()
+  "Remove the current buffer from `vterm-tabs-buffer-list` when it's killed."
+  (setq vterm-tabs-buffer-list (delq (current-buffer) vterm-tabs-buffer-list))
+  (when (eq vterm-tabs-last-buffer (current-buffer))
+    (setq vterm-tabs-last-buffer nil)))
 
 ;;;###autoload
 (defun vterm-tabs-toggle ()
-  "Toggle visibility of the vterm sidebar."
+  "Toggle the visibility of the vterm sidebar."
   (interactive)
   (if (and vterm-tabs-window (window-live-p vterm-tabs-window))
       (progn
+		(setq vterm-tabs-last-buffer (window-buffer vterm-tabs-window))
         (delete-window vterm-tabs-window)
         (setq vterm-tabs-window nil))
-    (let ((buffer (vterm-tabs-create-or-switch)))
-      (setq vterm-tabs-window (display-buffer-in-side-window buffer '((side . bottom))))
-      (set-window-dedicated-p vterm-tabs-window t)
-      (set-window-parameter vterm-tabs-window 'no-other-window t)
-	  (select-window vterm-tabs-window))))
+    (if (and vterm-tabs-last-buffer (buffer-live-p vterm-tabs-last-buffer))
+        (vterm-tabs-switch vterm-tabs-last-buffer)
+      (vterm-tabs-create-or-switch))))
 
+(defun vterm-tabs-create-at-directory (directory)
+  "Create a new vterm buffer in the specified DIRECTORY and switch to it."
+  (let ((default-directory directory))
+    (vterm-tabs-create-or-switch)))
 
+;;;###autoload
+(defun vterm-tabs-project ()
+  "Create a new vterm buffer at the current project's root."
+  (interactive)
+  (let* ((project (project-current))
+         (project-root (if project
+                           (project-root project)
+                         (user-error "No project found"))))
+    (vterm-tabs-create-at-directory project-root)))
 
-;; ###autoload
-;; (defun vterm-tabs-project ()
-;;   "Create new vterm buffer."
-;;   (interactive)
-;;   (let* ((project-root (or (project-current) `(transient . ,default-directory)))))
-;;   (if (vterm-tabs-project-root)
-;;       (if (buffer-live-p (get-buffer ))
-;;           (if (string-equal (buffer-name (current-buffer)) (vterm-tabs-project-get-buffer-name))
-;;               (delete-window (selected-window))
-;;             (switch-to-buffer-other-window (vterm-tabs-project-get-buffer-name)))
-;;         (let* ((vterm-buffer (vterm-tabs-get-buffer 'project))
-;;                (vterm-tabs-buffer-list (nconc vterm-tabs-buffer-list (list vterm-buffer))))
-;;           (set-buffer vterm-buffer)
-;;           (vterm-tabs-internal)
-;;           (switch-to-buffer-other-window vterm-buffer)))
-;;     (message "This file is not in a project")))
-
+;;;###autoload
+(defun vterm-tabs-home ()
+  "Create a new vterm buffer at the user's home directory."
+  (interactive)
+  (vterm-tabs-create-at-directory (expand-file-name "~/")))
 
 (defun vterm-tabs-rename-buffer (name)
   "Rename vterm buffer to NAME."
   (interactive "MRename vterm buffer: ")
-  (rename-buffer (vterm-tabs-format-buffer-name name)))
-
-(defun vterm-tabs-format-buffer-name (name)
-  "Format vterm buffer NAME."
-  (format "%s - %s" vterm-tabs-buffer-name name))
-
-(defun vterm-tabs-handle-close ()
-  "Close current vterm buffer when `exit' from vterm buffer."
-  (when (ignore-errors (get-buffer-process (current-buffer)))
-    (set-process-sentinel (get-buffer-process (current-buffer))
-                          (lambda (proc change)
-                            (when (string-match "\\(finished\\|exited\\)" change)
-                              (kill-buffer (process-buffer proc)))))))
+  (rename-buffer (format "%s - %s" vterm-tabs-buffer-name name)))
 
 (defun vterm-tabs-next (&optional offset)
   "Go to the next term buffer.
-If OFFSET is `non-nil', will goto next term buffer with OFFSET."
+If OFFSET is `non-nil', will go to the next term buffer with OFFSET."
   (interactive "P")
-  (vterm-tabs-switch 'NEXT (or offset 1)))
+  (vterm-tabs-switch-internal 'NEXT (or offset 1)))
 
 (defun vterm-tabs-prev (&optional offset)
   "Go to the previous term buffer.
-If OFFSET is `non-nil', will goto next term buffer with OFFSET."
+If OFFSET is `non-nil', will go to the previous term buffer with OFFSET."
   (interactive "P")
-  (vterm-tabs-switch 'PREVIOUS (or offset 1)))
-
-(defun vterm-tabs-switch (direction offset)
-  "Internal `vterm-tabs' buffers switch function.
-If DIRECTION is `NEXT', switch to the next term.
-If DIRECTION `PREVIOUS', switch to the previous term.
-Option OFFSET for skip OFFSET number term buffer."
-  (unless (vterm-tabs-switch-internal direction offset)
-    (vterm-tabs)))
-
-;; Utility Functions
-(defun vterm-tabs-internal ()
-  "Internal handle for `vterm-tabs' buffer."
-  (vterm-tabs-handle-close)
-  (add-hook 'kill-buffer-hook #'vterm-tabs-kill-buffer-hook))
-
-(defun vterm-tabs-kill-buffer-hook ()
-  "Function that hook `kill-buffer-hook'."
-  (when (eq major-mode 'vterm-mode)
-    (let ((killed-buffer (current-buffer)))
-      (setq vterm-tabs-buffer-list
-            (delq killed-buffer vterm-tabs-buffer-list)))))
-
-
-(defun vterm-tabs-dedicated-exist-p ()
-  "Return non-nil if `vterm-tabs' dedicated window exists."
-  (and (vterm-tabs-buffer-exist-p vterm-tabs-dedicated-buffer)
-       (vterm-tabs-window-exist-p vterm-tabs-dedicated-window)))
-
-(defun vterm-tabs-window-exist-p (window)
-  "Return non-nil if WINDOW exist."
-  (and window (window-live-p window)))
-
-(defun vterm-tabs-buffer-exist-p (buffer)
-  "Return non-nil if BUFFER exist.
-Otherwise return nil."
-  (and buffer (buffer-live-p buffer)))
+  (vterm-tabs-switch-internal 'PREVIOUS (or offset 1)))
 
 (defun vterm-tabs-switch-internal (direction offset)
-  "Internal `vterm-tabs' buffers switch function.
+  "Internal `vterm-tabs' buffer switch function.
 If DIRECTION is `NEXT', switch to the next term.
-If DIRECTION `PREVIOUS', switch to the previous term.
-Option OFFSET for skip OFFSET number term buffer."
+If DIRECTION is `PREVIOUS', switch to the previous term.
+OPTION OFFSET for skipping OFFSET number of term buffers."
   (when vterm-tabs-buffer-list
-    (let ((buffer-list-len (length vterm-tabs-buffer-list))
-          (my-index (cl-position (current-buffer) vterm-tabs-buffer-list)))
-      (if my-index
-          (let ((target-index (if (eq direction 'NEXT)
-                                  (mod (+ my-index offset) buffer-list-len)
-                                (mod (- my-index offset) buffer-list-len))))
-            (switch-to-buffer (nth target-index vterm-tabs-buffer-list)))
-        (switch-to-buffer (car vterm-tabs-buffer-list))))))
+    (let* ((buffer-list-len (length vterm-tabs-buffer-list))
+           (my-index (cl-position (current-buffer) vterm-tabs-buffer-list))
+           (target-index (if my-index
+                             (if (eq direction 'NEXT)
+                                 (mod (+ my-index offset) buffer-list-len)
+                               (mod (- my-index offset) buffer-list-len))
+                           0))) ;; Default to first buffer if not found
+      (vterm-tabs-switch (nth target-index vterm-tabs-buffer-list)))))
 
+(defun vterm-tabs-switch (buffer)
+  "Switch to a vterm BUFFER, reusing the existing window."
+  (setq vterm-tabs-last-buffer buffer)
+  (if (window-live-p vterm-tabs-window)
+      (let ((was-dedicated (window-dedicated-p vterm-tabs-window)))
+        (set-window-dedicated-p vterm-tabs-window nil)
+        (set-window-buffer vterm-tabs-window buffer)
+        (set-window-dedicated-p vterm-tabs-window was-dedicated)
+        (select-window vterm-tabs-window))
+    (setq vterm-tabs-window (display-buffer-in-side-window buffer '((side . bottom))))
+    (set-window-dedicated-p vterm-tabs-window t)
+    (set-window-parameter vterm-tabs-window 'no-other-window t)
+    (select-window vterm-tabs-window)))
+
+
+;; tab line stuff
 (defun vterm-tabs--tab-group (buffer)
   "Group buffers by major mode.
   Returns a single group name as a string for buffers with major modes
@@ -290,8 +265,7 @@ Re-introducing the old version fixes auto-dim-other-buffers for vterm buffers."
 		(setq vterm-tabs-dedicated-window (selected-window))
 		(setq vterm-tabs-dedicated-buffer (current-buffer))
 		(setq vterm-tabs-dedicated-buffer-name (buffer-name))
-        (set-window-dedicated-p (window) t)
-		)))
+        (set-window-dedicated-p (window) t))))
 
 (provide 'vterm-tabs)
 ;;; vterm-tabs.el ends here
