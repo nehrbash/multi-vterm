@@ -94,7 +94,7 @@ it attempts to use `vterm-tabs--last-compilation-buffer`."
     (with-current-buffer buffer
       (vterm-mode)
       (add-hook 'kill-buffer-hook #'vterm-tabs-remove-buffer nil t)
-      (push buffer vterm-tabs-buffer-list))
+      (setq vterm-tabs-buffer-list (append vterm-tabs-buffer-list (list buffer))))
     (vterm-tabs-switch buffer)))
 
 (defun vterm-tabs-remove-buffer ()
