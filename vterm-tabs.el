@@ -159,15 +159,16 @@ If OFFSET is `non-nil', will go to the previous term buffer with OFFSET."
 If DIRECTION is `NEXT', switch to the next term.
 If DIRECTION is `PREVIOUS', switch to the previous term.
 OPTION OFFSET for skipping OFFSET number of term buffers."
-  (when vterm-tabs-buffer-list
-    (let* ((buffer-list-len (length vterm-tabs-buffer-list))
-           (my-index (cl-position (current-buffer) vterm-tabs-buffer-list))
-           (target-index (if my-index
-                             (if (eq direction 'NEXT)
-                                 (mod (+ my-index offset) buffer-list-len)
-                               (mod (- my-index offset) buffer-list-len))
-                           0))) ;; Default to first buffer if not found
-      (vterm-tabs-switch (nth target-index vterm-tabs-buffer-list)))))
+  (let ((all-buffers (vterm-tabs--all-buffers)))
+    (when all-buffers
+      (let* ((buffer-list-len (length all-buffers))
+             (my-index (cl-position (current-buffer) all-buffers))
+             (target-index (if my-index
+                               (if (eq direction 'NEXT)
+                                   (mod (+ my-index offset) buffer-list-len)
+                                 (mod (- my-index offset) buffer-list-len))
+                             0))) ;; Default to first buffer if not found
+        (vterm-tabs-switch (nth target-index all-buffers))))))
 
 (defun vterm-tabs-switch (buffer)
   "Switch to a vterm BUFFER, reusing the existing window."
