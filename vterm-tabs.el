@@ -46,6 +46,11 @@
   :type 'string
   :group 'vterm-tabs)
 
+(defcustom vterm-tabs-compile-buffer-name "Compile"
+  "The compile buffer name."
+  :type 'string
+  :group 'vterm-tabs)
+
 (defvar vterm-tabs-window nil
   "Window displaying the vterm sidebar.")
 
@@ -237,42 +242,46 @@ Re-introducing the old version fixes auto-dim-other-buffers for vterm buffers."
 Include the last accessed vterm buffer, any active vterm buffers,
 the last compilation buffer, and possibly a magit status buffer."
 
-  (let ((buffers
-         (append
-          ;; Include vterm buffers
-          vterm-tabs-buffer-list
-          
-          ;; Include last accessed vterm buffer if it's live and not already in the list
-          (when (and vterm-tabs-last-buffer
-                     (buffer-live-p vterm-tabs-last-buffer)
-                     (not (memq vterm-tabs-last-buffer vterm-tabs-buffer-list)))
-            (list vterm-tabs-last-buffer))
-          
-          ;; Include the last compilation buffer if it's live
-          (when (and vterm-tabs--last-compilation-buffer
-                     (buffer-live-p vterm-tabs--last-compilation-buffer))
-            (list vterm-tabs--last-compilation-buffer))
-          
-          ;; Fallback: create and set the compilation buffer if it's nil
-          (unless (and vterm-tabs--last-compilation-buffer
-                       (buffer-live-p vterm-tabs--last-compilation-buffer))
-            ;; Create buffer and set it to vterm-tabs--last-compilation-buffer
-            (let ((compilation-buffer (get-buffer-create "*compilation*")))
-              (setq vterm-tabs--last-compilation-buffer compilation-buffer)
-              (list compilation-buffer)))
-          
-          ;; Optionally include the magit status buffer for the current project
-          (let ((magit-buffer (and (fboundp 'magit-status-buffer)
-                                   (magit-status-buffer))))
-            (when (and magit-buffer (buffer-live-p magit-buffer))
-              (list magit-buffer))))))
+  (let* ((compilation-buffer
+          (if (and vterm-tabs--last-compilation-buffer
+                   (buffer-live-p vterm-tabs--last-compilation-buffer))
+              vterm-tabs--last-compilation-buffer
+            (setq vterm-tabs--last-compilation-buffer
+                  (get-buffer-create vterm-tabs-compile-buffer-name))))
+         (buffers
+          (append
+			(with-current-buffer compilation-buffer
+             (unless (derived-mode-p 'compilation-mode)
+               (compilation-mode)
+			   (setq-local mode-line-format nil)))
+			(list compilation-buffer)
+			vterm-tabs-buffer-list
+           ;; Optionally include the magit status buffer for the current project
+           (let ((magit-buffer (and (fboundp 'magit-status-buffer)
+                                    (magit-status-buffer))))
+             (when (and magit-buffer (buffer-live-p magit-buffer))
+               (list magit-buffer))))))
     ;; Return the list of buffers
     buffers))
+
+
+(defvar vterm-tabs-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "<f6>") 'vterm-tabs-toggle)
+    (define-key map (kbd "C-M-r") 'vterm-tabs-rename-buffer)
+    (define-key map (kbd "C-M-t") 'vterm-tabs-home)
+    (define-key map (kbd "C-M-p") 'vterm-tabs-project)
+    (define-key map (kbd "C-M-f") 'vterm-tabs-next)
+    (define-key map (kbd "C-M-b") 'vterm-tabs-prev)
+    map)
+  "Keymap for `vterm-tabs-mode'.")
+
 
 ;;;###autoload
 (define-minor-mode vterm-tabs-mode
   "Minor mode to handle tabs in vterm."
   :lighter nil
+  :keymap vterm-tabs-mode-map
   (when vterm-tabs-mode
     (setq-local
      tab-line-tabs-function 'vterm-tabs--all-buffers
