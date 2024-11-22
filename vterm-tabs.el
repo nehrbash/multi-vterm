@@ -331,7 +331,7 @@ the last compilation buffer, and possibly a Magit status buffer."
 (defun vterm-tabs-display-buffer (buffer _alist)
   "Custom display function for BUFFER to handle specific modes."
   (with-current-buffer buffer
-    (when (memq major-mode '(vterm-mode magit-status-mode compilation-mode flymake-project-diagnostics-mode))
+    (when (derived-mode-p 'compilation-mode 'vterm-mode 'flymake-project-diagnostics-mode 'magit-status-mode)
       (vterm-tabs-switch buffer)
       vterm-tabs-window)))
 
@@ -348,7 +348,7 @@ the last compilation buffer, and possibly a Magit status buffer."
 	  (add-hook 'compilation-filter-hook 'vterm-tabs--colourise-compilation-buffer)
 	  (add-to-list 'display-buffer-alist ;; don't know how to remove this when
 		;; turned off.
-        '(((memq major-mode '(vterm-mode magit-status-mode compilation-mode flymake-project-diagnostics-mode))
+        '(((derived-mode-p 'compilation-mode 'vterm-mode 'flymake-project-diagnostics-mode 'magit-status-mode)
             my-display-buffer-function))))
 	(progn
 	  (advice-remove 'vterm--get-color  #'old-version-of-vterm--get-color)
