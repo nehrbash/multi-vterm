@@ -7,25 +7,26 @@
 (defun svg-tabs--svg-line-tab-name-buffer (buffer &optional _buffers)
   "Create the SVG representation of BUFFER's tab in the tab line."
   (let* ((current-buffer-name (buffer-name buffer))
-		  (name (cond
-				 ((derived-mode-p 'vterm-mode)
-				   (concat
-					 (all-the-icons-faicon  "terminal")
-					 " "
-					 current-buffer-name))
-				 current-buffer-name))
+		 (name (cond
+				((with-current-buffer buffer
+				   (derived-mode-p 'vterm-mode))
+				 (concat
+				  (all-the-icons-faicon "terminal")
+				  " "
+				  current-buffer-name))
+				(t current-buffer-name)))
 		 (current (eq (current-buffer) buffer)))
-	  (propertize
+	(propertize
+	 name
+	 'display
+	 (svg-tag-make
 	  name
-	  'display
-	  (svg-tag-make
-		name
-		:face (if current 'tab-line-tab-current 'tab-line-tab-inactive)
-		:inverse current
-		:radius 8
-		:margin 0
-		:scale 2
-		:font-weight 'bold))))
+	  :face (if current 'tab-line-tab-current 'tab-line-tab-inactive)
+	  :inverse current
+	  :radius 8
+	  :margin 0
+	  :scale 2
+	  :font-weight 'bold))))
 
 ;;;###autoload
 (setq
