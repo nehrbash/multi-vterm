@@ -112,6 +112,9 @@ it attempts to use `vterm-tabs--last-compilation-buffer`."
 (defun vterm-tabs-toggle ()
   "Toggle the visibility of the vterm sidebar."
   (interactive)
+  (let ((project (project-current)))
+	(when project
+      (setq vterm-tabs--last-project-root (project-root project))))
   (if (and vterm-tabs-window (window-live-p vterm-tabs-window))
       (progn
 		(setq vterm-tabs-last-buffer (window-buffer vterm-tabs-window))
@@ -126,14 +129,19 @@ it attempts to use `vterm-tabs--last-compilation-buffer`."
   (let ((default-directory directory))
     (vterm-tabs-create-or-switch)))
 
+(defvar vterm-tabs--last-project-root nil
+  "Store the last project root for `vterm-tabs-project' being called outside a project.")
+
 ;;;###autoload
 (defun vterm-tabs-project ()
   "Create a new vterm buffer at the current project's root."
   (interactive)
   (let* ((project (project-current))
-         (project-root (if project
-                           (project-root project)
-                         (user-error "No project found"))))
+          (project-root (if project
+                          (setq vterm-tabs--last-project-root (project-root project))
+						  (if vterm-tabs--last-project-root
+							vterm-tabs--last-project-root
+							(user-error "No project found")))))
     (vterm-tabs-create-at-directory project-root)))
 
 ;;;###autoload
