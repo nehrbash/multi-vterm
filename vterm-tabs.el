@@ -279,6 +279,7 @@ the last compilation buffer, and possibly a Magit status buffer."
 					(flymake-project-diagnostics-mode)
 					(setq-local flymake--project-diagnostic-list-project prj)
 					(revert-buffer)
+					(setq vterm-tabs--diagnostics-buffer buffer)
 					buffer)))))
           (buffers
 			(append
