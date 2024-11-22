@@ -187,7 +187,8 @@ OPTION OFFSET for skipping OFFSET number of term buffers."
     (setq vterm-tabs-window (display-buffer-in-side-window buffer '((side . bottom))))
     (set-window-dedicated-p vterm-tabs-window t)
     (set-window-parameter vterm-tabs-window 'no-other-window t)
-    (select-window vterm-tabs-window)))
+    (select-window vterm-tabs-window)
+	(setq-local mode-line-format nil)))
 
 
 ;; tab line stuff
@@ -236,32 +237,62 @@ Re-introducing the old version fixes auto-dim-other-buffers for vterm buffers."
 	  (setq vterm-tabs-dedicated-buffer-name (buffer-name))
 	  (set-window-dedicated-p vterm-tabs-dedicated-window t)))
 
+(defvar vterm-tabs--magit-buffer nil
+  "Last project Magit buffer")
+(defvar vterm-tabs--diagnostics-buffer nil
+  "Last project Magit buffer")
 
 (defun vterm-tabs--all-buffers ()
   "Return a list of buffers to display during vterm-tabs-mode.
 Include the last accessed vterm buffer, any active vterm buffers,
-the last compilation buffer, and possibly a magit status buffer."
-
+the last compilation buffer, and possibly a Magit status buffer."
   (let* ((compilation-buffer
-          (if (and vterm-tabs--last-compilation-buffer
-                   (buffer-live-p vterm-tabs--last-compilation-buffer))
-              vterm-tabs--last-compilation-buffer
-            (setq vterm-tabs--last-compilation-buffer
-                  (get-buffer-create vterm-tabs-compile-buffer-name))))
-         (buffers
-          (append
-			(with-current-buffer compilation-buffer
-             (unless (derived-mode-p 'compilation-mode)
-               (compilation-mode)
-			   (setq-local mode-line-format nil)))
-			(list compilation-buffer)
-			vterm-tabs-buffer-list
-           ;; Optionally include the magit status buffer for the current project
-           (let ((magit-buffer (and (fboundp 'magit-status-buffer)
-                                    (magit-status-buffer))))
-             (when (and magit-buffer (buffer-live-p magit-buffer))
-               (list magit-buffer))))))
-    ;; Return the list of buffers
+           (if (and vterm-tabs--last-compilation-buffer
+                 (buffer-live-p vterm-tabs--last-compilation-buffer))
+             vterm-tabs--last-compilation-buffer
+             (setq vterm-tabs--last-compilation-buffer
+               (get-buffer-create vterm-tabs-compile-buffer-name))))
+          (project-root (let ((project (project-current)))
+                          (when project
+							(project-root project))))
+          (magit-status-buffer
+			(if (and vterm-tabs--magit-buffer
+				  (buffer-live-p vterm-tabs--magit-buffer))
+			  vterm-tabs--magit-buffer
+			  (when project-root
+				(setq vterm-tabs--magit-buffer
+				  ;; this can freeze the screen because of Magit setup.
+				  (with-temp-buffer
+					(let ((magit-display-buffer-noselect t)
+						   (magit-display-buffer-function #'ignore))
+					  (magit-status-setup-buffer)
+					  ))))))
+		  (project-diagnostics
+			(if (and vterm-tabs--diagnostics-buffer
+				  (buffer-live-p vterm-tabs--diagnostics-buffer))
+			  vterm-tabs--diagnostics-buffer
+			  (when project-root
+				(let* ((prj (project-current))
+						(root (project-root prj))
+						(buffer (flymake--project-diagnostics-buffer root)))
+				  (with-current-buffer buffer
+					(flymake-project-diagnostics-mode)
+					(setq-local flymake--project-diagnostic-list-project prj)
+					(revert-buffer)
+					buffer)))))
+          (buffers
+			(append
+			  (when (buffer-live-p magit-status-buffer)
+				(list magit-status-buffer))
+			  (when (buffer-live-p compilation-buffer)
+				(with-current-buffer compilation-buffer
+				  (compilation-mode)
+				  (setq-local mode-line-format nil))
+				(list compilation-buffer))
+			  (when (buffer-live-p project-diagnostics)
+				(list project-diagnostics))
+			  vterm-tabs-buffer-list
+			  )))
     buffers))
 
 
@@ -294,8 +325,15 @@ the last compilation buffer, and possibly a magit status buffer."
 
 (defun vterm-tabs-mode--on ()
   "Turn on vterm-tabs-mode for certain major modes, excluding buffers matching patterns in `vterm-tabs-mode--exclude`."
-  (when (derived-mode-p 'compilation-mode 'vterm-mode 'flymake-project-diagnostics-mode)
+  (when (derived-mode-p 'compilation-mode 'vterm-mode 'flymake-project-diagnostics-mode 'magit-status-mode)
     (vterm-tabs-mode 1)))
+
+(defun vterm-tabs-display-buffer (buffer _alist)
+  "Custom display function for BUFFER to handle specific modes."
+  (with-current-buffer buffer
+    (when (memq major-mode '(vterm-mode magit-status-mode compilation-mode flymake-project-diagnostics-mode))
+      (vterm-tabs-switch buffer)
+      vterm-tabs-window)))
 
 ;;;###autoload
 (define-globalized-minor-mode global-vterm-tabs-mode
@@ -307,7 +345,11 @@ the last compilation buffer, and possibly a magit status buffer."
 	  (advice-add 'tab-line-select-tab-buffer :around #'vterm-tabs--select-buffer)
 	  (advice-add 'compilation-start :after 'vterm-tabs--save-compilation-buffer)
 	  (advice-add 'recompile :around 'vterm-tabs--find-prev-compilation)
-	  (add-hook 'compilation-filter-hook 'vterm-tabs--colourise-compilation-buffer))
+	  (add-hook 'compilation-filter-hook 'vterm-tabs--colourise-compilation-buffer)
+	  (add-to-list 'display-buffer-alist ;; don't know how to remove this when
+		;; turned off.
+        '(((memq major-mode '(vterm-mode magit-status-mode compilation-mode flymake-project-diagnostics-mode))
+            my-display-buffer-function))))
 	(progn
 	  (advice-remove 'vterm--get-color  #'old-version-of-vterm--get-color)
 	  (advice-remove 'tab-line-select-tab-buffer  #'vterm-tabs--select-buffer)
